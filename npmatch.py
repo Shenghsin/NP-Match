@@ -14,9 +14,10 @@ import torch.multiprocessing as mp
 
 from utils import net_builder, get_logger, count_parameters, over_write_args_from_file
 from train_utils import TBLog, get_optimizer, get_cosine_schedule_with_warmup
-from models.npmatch.npmatch  import NPMatch
+from models.npmatch.npmatch import NPMatch
 from datasets.ssl_dataset import SSL_Dataset, ImageNetLoader
-from datasets.data_utils import get_data_loader 
+from datasets.data_utils import get_data_loader
+
 
 def main(args):
     '''
@@ -25,12 +26,15 @@ def main(args):
     '''
 
     save_path = os.path.join(args.save_dir, args.save_name)
-    if os.path.exists(save_path) and not args.overwrite and args.resume == False:
+    if os.path.exists(
+            save_path) and not args.overwrite and args.resume == False:
         raise Exception('already existing model: {}'.format(save_path))
     if args.resume:
         if args.load_path is None:
-            raise Exception('Resume of training requires --load_path in the args')
-        if os.path.abspath(save_path) == os.path.abspath(args.load_path) and not args.overwrite:
+            raise Exception(
+                'Resume of training requires --load_path in the args')
+        if os.path.abspath(save_path) == os.path.abspath(
+                args.load_path) and not args.overwrite:
             raise Exception('Saving & Loading pathes are same. \
                             If you want over-write, give --overwrite in the argument.')
 
@@ -57,7 +61,12 @@ def main(args):
         args.world_size = ngpus_per_node * args.world_size
 
         # args=(,) means the arguments of main_worker
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+        mp.spawn(
+            main_worker,
+            nprocs=ngpus_per_node,
+            args=(
+                ngpus_per_node,
+                args))
     else:
         main_worker(args.gpu, ngpus_per_node, args)
 
@@ -70,7 +79,8 @@ def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
     args.gpu = gpu
 
-    # random seed has to be set for the syncronization of labeled data sampling in each process.
+    # random seed has to be set for the syncronization of labeled data
+    # sampling in each process.
     assert args.seed is not None
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -93,13 +103,15 @@ def main_worker(gpu, ngpus_per_node, args):
     logger_level = "WARNING"
     tb_log = None
     if args.rank % ngpus_per_node == 0:
-        tb_log = TBLog(save_path, 'tensorboard', use_tensorboard=args.use_tensorboard)
+        tb_log = TBLog(
+            save_path,
+            'tensorboard',
+            use_tensorboard=args.use_tensorboard)
         logger_level = "INFO"
 
     logger = get_logger(args.save_name, save_path, logger_level)
     logger.warning(f"USE GPU: {args.gpu} for training")
 
-     
     args.bn_momentum = 1.0 - 0.999
     if 'imagenet' in args.dataset.lower():
         _net_builder = net_builder('ResNet50', False, None)
@@ -117,28 +129,34 @@ def main_worker(gpu, ngpus_per_node, args):
                                    )
         latent_dim_ratio = 0.25
     model = NPMatch(_net_builder,
-                     args.num_classes,
-                     args.ema_m,
-                     args.T,
-                     args.p_cutoff,
-                     args.uncertainty_cutoff,
-                     args.ulb_loss_ratio,
-                     args.hard_label,
-                     num_eval_iter=args.num_eval_iter,
-                     tb_log=tb_log,
-                     latent_dim_ratio = latent_dim_ratio,
-                     logger=logger)
+                    args.num_classes,
+                    args.ema_m,
+                    args.T,
+                    args.p_cutoff,
+                    args.uncertainty_cutoff,
+                    args.ulb_loss_ratio,
+                    args.hard_label,
+                    num_eval_iter=args.num_eval_iter,
+                    tb_log=tb_log,
+                    latent_dim_ratio=latent_dim_ratio,
+                    logger=logger)
 
     logger.info(f'Number of Trainable Params: {count_parameters(model.model)}')
 
     # SET Optimizer & LR Scheduler
-    ## construct SGD and cosine lr scheduler
-    optimizer = get_optimizer(model.model, args.optim, args.lr, args.momentum, args.weight_decay, np_head_model=model.np_head_model)
+    # construct SGD and cosine lr scheduler
+    optimizer = get_optimizer(
+        model.model,
+        args.optim,
+        args.lr,
+        args.momentum,
+        args.weight_decay,
+        np_head_model=model.np_head_model)
     scheduler = get_cosine_schedule_with_warmup(optimizer,
                                                 args.num_train_iter,
                                                 63. / 128.,
                                                 num_warmup_steps=args.num_train_iter * 0)
-     
+
     model.set_optimizer(optimizer, scheduler)
 
     # SET Devices for (Distributed) DataParallel
@@ -157,13 +175,15 @@ def main_worker(gpu, ngpus_per_node, args):
             model.np_head_model.cuda(args.gpu)
             model.model = nn.SyncBatchNorm.convert_sync_batchnorm(model.model)
             model.model = torch.nn.parallel.DistributedDataParallel(model.model,
-                                                                    device_ids=[args.gpu],
-                                                                    broadcast_buffers=False,
-                                                                    find_unused_parameters=True)                                            
-            model.np_head_model = torch.nn.parallel.DistributedDataParallel(model.np_head_model,
-                                                                    device_ids=[args.gpu],
+                                                                    device_ids=[
+                                                                        args.gpu],
                                                                     broadcast_buffers=False,
                                                                     find_unused_parameters=True)
+            model.np_head_model = torch.nn.parallel.DistributedDataParallel(model.np_head_model,
+                                                                            device_ids=[
+                                                                                args.gpu],
+                                                                            broadcast_buffers=False,
+                                                                            find_unused_parameters=True)
 
         else:
             # if arg.gpu is None, DDP will divide and allocate batch_size
@@ -187,17 +207,17 @@ def main_worker(gpu, ngpus_per_node, args):
 
     if args.rank != 0 and args.distributed:
         torch.distributed.barrier()
- 
+
     # Construct Dataset & DataLoader
     if args.dataset.lower() != "imagenet":
         train_dset = SSL_Dataset(args, alg='npmatch', name=args.dataset, train=True,
-                                num_classes=args.num_classes, data_dir=args.data_dir)
+                                 num_classes=args.num_classes, data_dir=args.data_dir)
         lb_dset, ulb_dset = train_dset.get_ssl_dset(args.num_labels)
         _eval_dset = SSL_Dataset(args, alg='npmatch', name=args.dataset, train=False,
-                                num_classes=args.num_classes, data_dir=args.data_dir)
+                                 num_classes=args.num_classes, data_dir=args.data_dir)
         eval_dset = _eval_dset.get_dset()
     else:
-#        print(args.num_labels)
+        #        print(args.num_labels)
         image_loader = ImageNetLoader(root_path=args.data_dir, num_labels=args.num_labels,
                                       num_class=args.num_classes)
         lb_dset = image_loader.get_lb_train_data()
@@ -205,8 +225,7 @@ def main_worker(gpu, ngpus_per_node, args):
         eval_dset = image_loader.get_lb_test_data()
     if args.rank == 0:
         torch.distributed.barrier()
- 
-    
+
     loader_dict = {}
     dset_dict = {'train_lb': lb_dset, 'train_ulb': ulb_dset, 'eval': eval_dset}
 
@@ -229,7 +248,6 @@ def main_worker(gpu, ngpus_per_node, args):
                                           num_workers=args.num_workers,
                                           drop_last=False)
 
-     
     model.set_data_loader(loader_dict)
 
     model.set_dset(ulb_dset)
@@ -238,7 +256,6 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.resume:
         model.load_model(args.load_path)
 
-     
     trainer = model.train
     for epoch in range(args.epoch):
         trainer(args, logger=logger)
@@ -274,10 +291,13 @@ if __name__ == "__main__":
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--load_path', type=str, default=None)
     parser.add_argument('-o', '--overwrite', action='store_true')
-    parser.add_argument('--use_tensorboard', action='store_true', help='Use tensorboard to plot and save curves, otherwise save the curves locally.')
+    parser.add_argument(
+        '--use_tensorboard',
+        action='store_true',
+        help='Use tensorboard to plot and save curves, otherwise save the curves locally.')
 
     '''
-    Training Configuration 
+    Training Configuration
     '''
 
     parser.add_argument('--epoch', type=int, default=1)
@@ -296,7 +316,11 @@ if __name__ == "__main__":
     parser.add_argument('--T', type=float, default=0.5)
     parser.add_argument('--p_cutoff', type=float, default=0.95)
     parser.add_argument('--uncertainty_cutoff', type=float, default=0.4)
-    parser.add_argument('--ema_m', type=float, default=0.999, help='ema momentum for eval_model')
+    parser.add_argument(
+        '--ema_m',
+        type=float,
+        default=0.999,
+        help='ema momentum for eval_model')
     parser.add_argument('--ulb_loss_ratio', type=float, default=1.0)
     parser.add_argument('-w', '--thresh_warmup', type=str2bool, default=True)
 
@@ -307,7 +331,11 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=3e-2)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
-    parser.add_argument('--amp', type=str2bool, default=False, help='use mixed precision training or not')
+    parser.add_argument(
+        '--amp',
+        type=str2bool,
+        default=False,
+        help='use mixed precision training or not')
     parser.add_argument('--clip', type=float, default=3.0)
     '''
     Backbone Net Configurations
@@ -333,7 +361,8 @@ if __name__ == "__main__":
     multi-GPUs & Distrbitued Training
     '''
 
-    ## args for distributed training (from https://github.com/pytorch/examples/blob/master/imagenet/main.py)
+    # args for distributed training (from
+    # https://github.com/pytorch/examples/blob/master/imagenet/main.py)
     parser.add_argument('--world-size', default=1, type=int,
                         help='number of nodes for distributed training')
     parser.add_argument('--rank', default=0, type=int,

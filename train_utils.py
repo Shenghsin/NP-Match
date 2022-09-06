@@ -52,7 +52,7 @@ class SGD(Optimizer):
                 p_{t+1} & = p_{t} - \text{lr} * v_{t+1},
             \end{aligned}
 
-        where :math:`p`, :math:`g`, :math:`v` and :math:`\mu` denote the 
+        where :math:`p`, :math:`g`, :math:`v` and :math:`\mu` denote the
         parameters, gradient, velocity, and momentum respectively.
 
         This is in contrast to Sutskever et. al. and
@@ -74,12 +74,14 @@ class SGD(Optimizer):
         if momentum < 0.0:
             raise ValueError("Invalid momentum value: {}".format(momentum))
         if weight_decay < 0.0:
-            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+            raise ValueError(
+                "Invalid weight_decay value: {}".format(weight_decay))
 
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
                         weight_decay=weight_decay, nesterov=nesterov)
         if nesterov and (momentum <= 0 or dampening != 0):
-            raise ValueError("Nesterov momentum requires a momentum and zero dampening")
+            raise ValueError(
+                "Nesterov momentum requires a momentum and zero dampening")
         super(SGD, self).__init__(params, defaults)
 
     def __setstate__(self, state):
@@ -116,7 +118,8 @@ class SGD(Optimizer):
                 if momentum != 0:
                     param_state = self.state[p]
                     if 'momentum_buffer' not in param_state:
-                        buf = param_state['momentum_buffer'] = torch.clone(d_p).detach()
+                        buf = param_state['momentum_buffer'] = torch.clone(
+                            d_p).detach()
                     else:
                         buf = param_state['momentum_buffer']
                         buf.mul_(momentum).add_(d_p, alpha=1 - dampening)
@@ -195,7 +198,8 @@ def wd_loss(net):
     return loss
 
 
-def get_optimizer(net,optim_name='SGD', lr=0.1, momentum=0.9, weight_decay=0, nesterov=True, bn_wd_skip=True, np_head_model=None):
+def get_optimizer(net, optim_name='SGD', lr=0.1, momentum=0.9,
+                  weight_decay=0, nesterov=True, bn_wd_skip=True, np_head_model=None):
     '''
     return optimizer (name) in torch.optim.
     If bn_wd_skip, the optimizer does not apply
@@ -210,15 +214,14 @@ def get_optimizer(net,optim_name='SGD', lr=0.1, momentum=0.9, weight_decay=0, ne
             no_decay.append(param)
         else:
             decay.append(param)
-    
-    if np_head_model is not None:
-     for name, param in np_head_model.named_parameters():
-        if ('bn' in name or 'bias' in name) and bn_wd_skip:
-            no_decay.append(param)
-        else:
-            decay.append(param)
-     print('neural process header is loaded ...')
 
+    if np_head_model is not None:
+        for name, param in np_head_model.named_parameters():
+            if ('bn' in name or 'bias' in name) and bn_wd_skip:
+                no_decay.append(param)
+            else:
+                decay.append(param)
+        print('neural process header is loaded ...')
 
     per_param_args = [{'params': decay},
                       {'params': no_decay, 'weight_decay': 0.0}]
@@ -227,7 +230,8 @@ def get_optimizer(net,optim_name='SGD', lr=0.1, momentum=0.9, weight_decay=0, ne
         optimizer = torch.optim.SGD(per_param_args, lr=lr, momentum=momentum, weight_decay=weight_decay,
                                     nesterov=nesterov)
     elif optim_name == 'AdamW':
-        optimizer = torch.optim.AdamW(per_param_args, lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.AdamW(
+            per_param_args, lr=lr, weight_decay=weight_decay)
     return optimizer
 
 
@@ -251,21 +255,26 @@ def get_cosine_schedule_with_warmup(optimizer,
             _lr = float(current_step) / float(max(1, num_warmup_steps))
         else:
             num_cos_steps = float(current_step - num_warmup_steps)
-            num_cos_steps = num_cos_steps / float(max(1, num_training_steps - num_warmup_steps))
+            num_cos_steps = num_cos_steps / \
+                float(max(1, num_training_steps - num_warmup_steps))
             _lr = max(0.0, math.cos(math.pi * num_cycles * num_cos_steps))
         return _lr
 
     return LambdaLR(optimizer, _lr_lambda, last_epoch)
 
-def get_imagenet_schedule(optimizer, num_training_steps, num_labels, batch_size):
+
+def get_imagenet_schedule(
+        optimizer, num_training_steps, num_labels, batch_size):
     def iter2epoch(iter):
         iter_per_ep = num_labels // batch_size
         ep = iter // iter_per_ep
         return ep
+
     def epoch2iter(epoch):
         iter_per_ep = num_labels // batch_size
         iter = epoch * iter_per_ep
         return iter
+
     def _lr_lambda(iter):
         return None
 
@@ -273,12 +282,12 @@ def get_imagenet_schedule(optimizer, num_training_steps, num_labels, batch_size)
 def accuracy(output, target, topk=(1,)):
     """
     Computes the accuracy over the k top predictions for the specified values of k
-    
+
     Args
         output: logits or probs (num of batch, num of classes)
         target: (num of batch, 1) or (num of batch, )
         topk: list of returned k
-    
+
     refer: https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
 
@@ -288,7 +297,8 @@ def accuracy(output, target, topk=(1,)):
 
         # torch.topk(input, k, dim=None, largest=True, sorted=True, out=None)
         # return: value, index
-        _, pred = output.topk(k=maxk, dim=1, largest=True, sorted=True)  # pred: [num of batch, k]
+        _, pred = output.topk(k=maxk, dim=1, largest=True,
+                              sorted=True)  # pred: [num of batch, k]
         pred = pred.t()  # pred: [k, num of batch]
 
         # [1, num of batch] -> [k, num_of_batch] : bool
@@ -301,17 +311,18 @@ def accuracy(output, target, topk=(1,)):
         # np.shape(res): [k, 1]
         return res
 
- 
 
 def ce_loss_np(logits, targets_onehot, sample_T):
-    
-    pred = F.softmax(logits, dim=-1)
-   
-    B = pred.size(1)
-    targets_onehot_expand = targets_onehot.unsqueeze(0).expand(sample_T, -1, -1) 
-    loss =torch.sum(-targets_onehot_expand * pred.log())
 
-    return loss/(B*sample_T)
+    pred = F.softmax(logits, dim=-1)
+
+    B = pred.size(1)
+    targets_onehot_expand = targets_onehot.unsqueeze(
+        0).expand(sample_T, -1, -1)
+    loss = torch.sum(-targets_onehot_expand * pred.log())
+
+    return loss / (B * sample_T)
+
 
 class EMA:
     """
@@ -337,7 +348,8 @@ class EMA:
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 assert name in self.shadow
-                new_average = (1.0 - self.decay) * param.data + self.decay * self.shadow[name]
+                new_average = (1.0 - self.decay) * param.data + \
+                    self.decay * self.shadow[name]
                 self.shadow[name] = new_average.clone()
 
     def apply_shadow(self):
@@ -365,15 +377,20 @@ class Bn_Controller:
     def freeze_bn(self, model):
         assert self.backup == {}
         for name, m in model.named_modules():
-            if isinstance(m, nn.SyncBatchNorm) or isinstance(m, nn.BatchNorm2d):
-                self.backup[name + '.running_mean'] = m.running_mean.data.clone()
+            if isinstance(m, nn.SyncBatchNorm) or isinstance(
+                    m, nn.BatchNorm2d):
+                self.backup[name +
+                            '.running_mean'] = m.running_mean.data.clone()
                 self.backup[name + '.running_var'] = m.running_var.data.clone()
-                self.backup[name + '.num_batches_tracked'] = m.num_batches_tracked.data.clone()
+                self.backup[name +
+                            '.num_batches_tracked'] = m.num_batches_tracked.data.clone()
 
     def unfreeze_bn(self, model):
         for name, m in model.named_modules():
-            if isinstance(m, nn.SyncBatchNorm) or isinstance(m, nn.BatchNorm2d):
+            if isinstance(m, nn.SyncBatchNorm) or isinstance(
+                    m, nn.BatchNorm2d):
                 m.running_mean.data = self.backup[name + '.running_mean']
                 m.running_var.data = self.backup[name + '.running_var']
-                m.num_batches_tracked.data = self.backup[name + '.num_batches_tracked']
+                m.num_batches_tracked.data = self.backup[name +
+                                                         '.num_batches_tracked']
         self.backup = {}

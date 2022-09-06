@@ -11,7 +11,7 @@ from collections import Counter
 import os
 import contextlib
 from train_utils import AverageMeter
- 
+
 from .npmatch_utils import calculate_loss, Get_Scalar, selecting_with_thresh
 from .np_head import *
 from train_utils import ce_loss_np, EMA, Bn_Controller
@@ -21,7 +21,7 @@ from copy import deepcopy
 
 
 class NPMatch:
-    def __init__(self, net_builder, num_classes, ema_m, T, p_cutoff, uncertainty_cutoff, lambda_u, \
+    def __init__(self, net_builder, num_classes, ema_m, T, p_cutoff, uncertainty_cutoff, lambda_u,
                  hard_label=True, t_fn=None, p_fn=None, it=0, memory_max_length=2560, num_eval_iter=1000, tb_log=None, logger=None, sample_T=10, latent_dim_ratio=0.25):
 
         super(NPMatch, self).__init__()
@@ -31,27 +31,41 @@ class NPMatch:
         self.num_classes = num_classes
         self.ema_m = ema_m
 
-       
-
         self.model = net_builder(num_classes=num_classes)
         self.ema_model = None
         rand_x = torch.randn(1, 3, 224, 224)
         y = self.model(rand_x)
-        num_features = y.size(-1) 
-        
+        num_features = y.size(-1)
+
         num_latent = int(num_features * latent_dim_ratio)
 
-        self.np_head_model = NP_HEAD(num_features, num_latent, num_classes, memory_max_length= memory_max_length) 
+        self.np_head_model = NP_HEAD(
+            num_features,
+            num_latent,
+            num_classes,
+            memory_max_length=memory_max_length)
         self.ema_np_head_model = None
 
         # memory initialization
-        self.latent_memory = nn.Parameter(nn.init.normal_(torch.Tensor(1, num_latent).type(torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor)),requires_grad=False).cuda()
-        self.deterministic_memory =  nn.Parameter(nn.init.normal_(torch.Tensor(1, num_latent).type(torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor)),requires_grad=False).cuda()
+        self.latent_memory = nn.Parameter(
+            nn.init.normal_(
+                torch.Tensor(
+                    1,
+                    num_latent).type(
+                    torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor)),
+            requires_grad=False).cuda()
+        self.deterministic_memory = nn.Parameter(
+            nn.init.normal_(
+                torch.Tensor(
+                    1,
+                    num_latent).type(
+                    torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor)),
+            requires_grad=False).cuda()
 
         self.num_eval_iter = num_eval_iter
         self.t_fn = Get_Scalar(T)  # temperature params function
         self.p_fn = Get_Scalar(p_cutoff)  # confidence cutoff function
-        self.uncertainty_fn = Get_Scalar(uncertainty_cutoff) 
+        self.uncertainty_fn = Get_Scalar(uncertainty_cutoff)
         self.lambda_u = lambda_u
         self.tb_log = tb_log
         self.sample_T = sample_T
@@ -93,7 +107,8 @@ class NPMatch:
             self.np_ema.load(self.ema_np_head_model)
 
         # p(y) based on the labeled examples seen during training
-        dist_file_name = r"./data_statistics/" + args.dataset + '_' + str(args.num_labels) + '.json'
+        dist_file_name = r"./data_statistics/" + \
+            args.dataset + '_' + str(args.num_labels) + '.json'
         if args.dataset.upper() == 'IMAGENET':
             p_target = None
         else:
@@ -101,7 +116,6 @@ class NPMatch:
                 p_target = json.loads(f.read())
                 p_target = torch.tensor(p_target['distribution'])
                 p_target = p_target.cuda(args.gpu)
-           
 
         # for gpu profiling
         start_batch = torch.cuda.Event(enable_timing=True)
@@ -120,7 +134,8 @@ class NPMatch:
             eval_dict = self.evaluate(args=args)
             print(eval_dict)
 
-        selected_label = torch.ones((len(self.ulb_dset),), dtype=torch.long, ) * -1
+        selected_label = torch.ones(
+            (len(self.ulb_dset),), dtype=torch.long, ) * -1
         selected_label = selected_label.cuda(args.gpu)
 
         classwise_acc = torch.zeros((args.num_classes,)).cuda(args.gpu)
@@ -140,76 +155,92 @@ class NPMatch:
             num_ulb = x_ulb_w.shape[0]
             assert num_ulb == x_ulb_s.shape[0]
 
-            x_lb, x_ulb_w, x_ulb_s = x_lb.cuda(args.gpu), x_ulb_w.cuda(args.gpu), x_ulb_s.cuda(args.gpu)
+            x_lb, x_ulb_w, x_ulb_s = x_lb.cuda(
+                args.gpu), x_ulb_w.cuda(
+                args.gpu), x_ulb_s.cuda(
+                args.gpu)
             x_ulb_idx = x_ulb_idx.cuda(args.gpu)
             y_lb = y_lb.cuda(args.gpu)
 
             pseudo_counter = Counter(selected_label.tolist())
-            if max(pseudo_counter.values()) < len(self.ulb_dset):  # not all(5w) -1
+            if max(pseudo_counter.values()) < len(
+                    self.ulb_dset):  # not all(5w) -1
                 if args.thresh_warmup:
                     for i in range(args.num_classes):
-                        classwise_acc[i] = pseudo_counter[i] / max(pseudo_counter.values())
+                        classwise_acc[i] = pseudo_counter[i] / \
+                            max(pseudo_counter.values())
                 else:
                     wo_negative_one = deepcopy(pseudo_counter)
                     if -1 in wo_negative_one.keys():
                         wo_negative_one.pop(-1)
                     for i in range(args.num_classes):
-                        classwise_acc[i] = pseudo_counter[i] / max(wo_negative_one.values())
+                        classwise_acc[i] = pseudo_counter[i] / \
+                            max(wo_negative_one.values())
 
             inputs = torch.cat((x_lb, x_ulb_w, x_ulb_s))
 
             # inference and calculate sup/unsup losses
             with amp_cm():
-                logits = self.model(inputs)              
+                logits = self.model(inputs)
                 logits_x_lb = logits[:num_lb]
                 logits_x_ulb_w, logits_x_ulb_s = logits[num_lb:].chunk(2)
-               
+
                 # hyper-params for update
                 #T = self.t_fn(self.it)
                 p_cutoff = self.p_fn(self.it)
                 uncertainty_cutoff = self.uncertainty_fn(self.it)
 
-                
-                logits_x_ulb_w_out = self.np_head_model(logits_x_ulb_w, self.deterministic_memory, self.latent_memory, forward_times = self.sample_T, phase_train=False)
-                mask, mask_bool, select, pseudo_lb, prob_list = selecting_with_thresh(logits_x_ulb_w_out,  p_cutoff,  uncertainty_cutoff, classwise_acc, prob_list)
+                logits_x_ulb_w_out = self.np_head_model(
+                    logits_x_ulb_w,
+                    self.deterministic_memory,
+                    self.latent_memory,
+                    forward_times=self.sample_T,
+                    phase_train=False)
+                mask, mask_bool, select, pseudo_lb, prob_list = selecting_with_thresh(
+                    logits_x_ulb_w_out, p_cutoff, uncertainty_cutoff, classwise_acc, prob_list)
 
                 y_lb_onehot = F.one_hot(y_lb, num_classes=args.num_classes)
-                 
 
-                logits_x_lb_out,  mean_context,  sigma_context, self.deterministic_memory, self.latent_memory = self.np_head_model(logits_x_lb, self.deterministic_memory, self.latent_memory, forward_times = self.sample_T, x_context_in=logits_x_lb, labels_in=y_lb_onehot, labels_context_in=y_lb_onehot)
-                sup_loss = ce_loss_np(logits_x_lb_out, y_lb_onehot, self.sample_T)
+                logits_x_lb_out, mean_context, sigma_context, self.deterministic_memory, self.latent_memory = self.np_head_model(
+                    logits_x_lb, self.deterministic_memory, self.latent_memory, forward_times=self.sample_T, x_context_in=logits_x_lb, labels_in=y_lb_onehot, labels_context_in=y_lb_onehot)
+                sup_loss = ce_loss_np(
+                    logits_x_lb_out, y_lb_onehot, self.sample_T)
 
                 unsup_loss = torch.tensor(0.0)
                 skew_uncertain_loss = torch.tensor(0.0)
 
                 if mask > 0:
 
-                 pseudo_lb_masked = torch.masked_select(pseudo_lb, mask_bool).cuda()
-                 pseudo_lb_masked_onehot = F.one_hot(pseudo_lb_masked, num_classes=args.num_classes)
-                 D = logits_x_ulb_s.size(-1)
-                 mask_bool_expand = mask_bool.unsqueeze(1).expand(-1, D)
+                    pseudo_lb_masked = torch.masked_select(
+                        pseudo_lb, mask_bool).cuda()
+                    pseudo_lb_masked_onehot = F.one_hot(
+                        pseudo_lb_masked, num_classes=args.num_classes)
+                    D = logits_x_ulb_s.size(-1)
+                    mask_bool_expand = mask_bool.unsqueeze(1).expand(-1, D)
 
-                 logits_x_ulb_s_masked =  torch.masked_select(logits_x_ulb_s, mask_bool_expand).view(-1, D).cuda()
-            
+                    logits_x_ulb_s_masked = torch.masked_select(
+                        logits_x_ulb_s, mask_bool_expand).view(-1, D).cuda()
 
-                 logits_x_ulb_target, mean_target, sigma_target, self.deterministic_memory, self.latent_memory  = self.np_head_model(logits_x_ulb_s_masked, self.deterministic_memory, self.latent_memory, forward_times = self.sample_T, x_context_in=logits_x_lb, labels_in=pseudo_lb_masked_onehot, labels_context_in=y_lb_onehot)
-          
+                    logits_x_ulb_target, mean_target, sigma_target, self.deterministic_memory, self.latent_memory = self.np_head_model(
+                        logits_x_ulb_s_masked, self.deterministic_memory, self.latent_memory, forward_times=self.sample_T, x_context_in=logits_x_lb, labels_in=pseudo_lb_masked_onehot, labels_context_in=y_lb_onehot)
 
-                 unsup_loss, skew_uncertain_loss = calculate_loss(logits_x_lb_out, logits_x_ulb_target, mean_context, sigma_context, mean_target, sigma_target,  self.sample_T, pseudo_lb_masked_onehot) 
+                    unsup_loss, skew_uncertain_loss = calculate_loss(
+                        logits_x_lb_out, logits_x_ulb_target, mean_context, sigma_context, mean_target, sigma_target, self.sample_T, pseudo_lb_masked_onehot)
 
                 if x_ulb_idx[select == 1].nelement() != 0:
-                    selected_label[x_ulb_idx[select == 1]] = pseudo_lb[select == 1]
- 
-                
+                    selected_label[x_ulb_idx[select == 1]
+                                   ] = pseudo_lb[select == 1]
+
                 total_loss = sup_loss + self.lambda_u * unsup_loss + 0.01 * skew_uncertain_loss
-              
 
             # parameter updates
             if args.amp:
                 scaler.scale(total_loss).backward()
                 if (args.clip > 0):
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), args.clip)
-                    torch.nn.utils.clip_grad_norm_(self.np_head_model.parameters(), args.clip)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), args.clip)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.np_head_model.parameters(), args.clip)
                 scaler.step(self.optimizer)
                 scaler.update()
             else:
@@ -218,17 +249,18 @@ class NPMatch:
                 check_grad = 0.0
                 for name, params in self.np_head_model.named_parameters():
                     check_grad += torch.sum(torch.isnan(params.grad).float())
-                   
-                    if torch.sum(check_grad) > 0.0:
-                       update = False
-                       break
-                    
-                if update: 
-                  if (args.clip > 0):
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), args.clip)
-                    torch.nn.utils.clip_grad_norm_(self.np_head_model.parameters(), args.clip)
-                  self.optimizer.step()
 
+                    if torch.sum(check_grad) > 0.0:
+                        update = False
+                        break
+
+                if update:
+                    if (args.clip > 0):
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), args.clip)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.np_head_model.parameters(), args.clip)
+                    self.optimizer.step()
 
             self.scheduler.step()
             self.ema.update()
@@ -244,7 +276,8 @@ class NPMatch:
             tb_dict['train/total_loss'] = total_loss.detach()
             tb_dict['train/mask_ratio'] = 1.0 - mask.detach()
             tb_dict['lr'] = self.optimizer.param_groups[0]['lr']
-            tb_dict['train/prefecth_time'] = start_batch.elapsed_time(end_batch) / 1000.
+            tb_dict['train/prefecth_time'] = start_batch.elapsed_time(
+                end_batch) / 1000.
             tb_dict['train/run_time'] = start_run.elapsed_time(end_run) / 1000.
 
             # Save model for each 10K steps and best model for each 1K steps
@@ -279,7 +312,8 @@ class NPMatch:
                 self.num_eval_iter = 1000
 
         eval_dict = self.evaluate(args=args)
-        eval_dict.update({'eval/best_acc': best_eval_acc, 'eval/best_it': best_it})
+        eval_dict.update(
+            {'eval/best_acc': best_eval_acc, 'eval/best_it': best_it})
         return eval_dict
 
     @torch.no_grad()
@@ -301,8 +335,13 @@ class NPMatch:
             num_batch = x.shape[0]
             total_num += num_batch
             logits = self.model(x)
-            logits = self.np_head_model(logits, self.deterministic_memory, self.latent_memory, forward_times = self.sample_T, phase_train=False)
-            
+            logits = self.np_head_model(
+                logits,
+                self.deterministic_memory,
+                self.latent_memory,
+                forward_times=self.sample_T,
+                phase_train=False)
+
             logits_out = logits.mean(0)
             logits = torch.softmax(logits, dim=-1).mean(0)
 
@@ -342,7 +381,7 @@ class NPMatch:
 
         torch.save({'model': self.model.state_dict(),
                     'np_head_model': self.np_head_model.state_dict(),
-                    'state_dict_deterministic_memory': self.deterministic_memory, 
+                    'state_dict_deterministic_memory': self.deterministic_memory,
                     'state_dict_latent_memory': self.latent_memory,
                     'optimizer': self.optimizer.state_dict(),
                     'scheduler': self.scheduler.state_dict(),
@@ -380,7 +419,8 @@ class NPMatch:
     def interleave(self, xy, batch):
         nu = len(xy) - 1
         offsets = self.interleave_offsets(batch, nu)
-        xy = [[v[offsets[p]:offsets[p + 1]] for p in range(nu + 1)] for v in xy]
+        xy = [[v[offsets[p]:offsets[p + 1]]
+               for p in range(nu + 1)] for v in xy]
         for i in range(1, nu + 1):
             xy[0][i], xy[i][i] = xy[i][i], xy[0][i]
         return [torch.cat(v, dim=0) for v in xy]
